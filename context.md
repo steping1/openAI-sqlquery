@@ -1,0 +1,232 @@
+# context.md
+
+## 1. Projenin Genel Tanımı
+Bu sistem, **Türkçe doğal dil** ile sorulan soruları **PostgreSQL** veritabanına uygun SQL sorgularına dönüştürür, sorguyu çalıştırır ve sonucu **Türkçe, anlamlı, bağlama uygun** şekilde kullanıcıya iletir.  
+Sistem **Gemma LLM (OpenRouter)**, **LangChain**, ve **Docker üzerinde PostgreSQL** kullanılarak geliştirilir.  
+İlerleyen aşamalarda **agent metodları** eklenerek otomasyon yetenekleri artırılacaktır.
+
+---
+
+## 2. Genel Çalışma Akışı
+1. **Kullanıcı girişi**: Türkçe doğal dilde bir soru veya talep girilir.  
+2. **Bağlam ekleme**: Kullanıcı girdisi, önceden tanımlanmış kurallarla (context rules) birlikte LLM’e iletilir.  
+3. **LLM → SQL dönüşümü**: Gemma modeli, mevcut veritabanı şemasına uygun SQL sorgusu üretir.  
+4. **SQL sorgusunun çalıştırılması**: LangChain, sorguyu PostgreSQL üzerinde çalıştırır.  
+5. **Ham sonuç → Anlamlı cevap**: Sorgu sonucu tekrar LLM’e gönderilir, Türkçe ve anlamlı bir cevap üretilir.  
+6. **Sonuç iletimi**: Kullanıcıya anlaşılır formatta cevap sunulur.  
+
+---
+
+## 3. Teknik Bileşenler
+
+### 3.1 LLM (Gemma, OpenRouter üzerinden)
+- Model: `google/gemma-7b-it` veya benzeri
+- Görevleri:
+  - Türkçe doğal dil sorusunu SQL’e dönüştürmek
+  - SQL sonucunu Türkçe ve anlamlı cevap haline getirmek
+- Kullanım kuralları:
+  - Sadece belirtilen veritabanı şemasını kullanmak
+  - Şema dışında tablo/kolon uydurmamak
+  - SQL sözdizimi PostgreSQL uyumlu olmak
+  - Cevap dili daima Türkçe
+- Bağlam (context) her sorgu öncesinde gönderilecek
+
+### 3.2 PostgreSQL (Docker)
+- Çalışma ortamı: Docker container
+- Bağlantı URI formatı:
+
+Docker Bilgileri:localhost
+ID:5ef2661fc5c6
+docker run --name postgres-test \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=123456 \
+  -e POSTGRES_DB=testdb \
+  -p 5432:5432 \
+  -d postgres
+
+
+
+postgresql+psycopg2://<username>:<password>@localhost:5432/<dbname>
+
+
+
+- Test için başlangıç şeması eklenir (örnek aşağıda)
+- Gerçek proje aşamasında şema, uygulamanın gerçek verisine göre güncellenecek
+
+### 3.3 LangChain
+- Görevleri:
+- PostgreSQL’e bağlanmak (`SQLDatabase` modülü)
+- Veritabanı şemasını LLM’e aktarmak
+- Kullanıcıdan gelen soruları LLM aracılığıyla SQL’e dönüştürmek
+- SQL’i çalıştırıp sonucu almak
+- Sonucu tekrar LLM’e vererek Türkçe anlamlı cevap üretmek
+- Kullanılacak zincirler:
+- `SQLDatabaseChain` veya
+- `create_sql_agent` (agent tabanlı yaklaşım)
+- Geliştirilebilirlik:
+- İleride API, CSV, PDF gibi farklı veri kaynakları eklenebilir
+
+### 3.4 Güvenlik
+- Doğrudan kullanıcı girdisi SQL olarak çalıştırılmaz
+- SQL injection’a karşı koruma
+- Sadece şema ile uyumlu sorgular çalıştırılır
+- LLM’in yanlış şema bilgisi üretmesi engellenir
+
+---
+
+## 4. Bağlam (Context) Kuralları
+Bu kurallar her sorgu öncesinde LLM’e iletilecek ve **LLM bu kurallara kesinlikle uymalıdır**:
+
+1. **Sadece belirtilen şema içindeki tablolar ve kolonlar kullanılabilir.**
+2. **Şemada bulunmayan tablo veya kolon üretilmeyecek.**
+3. **SQL sözdizimi PostgreSQL uyumlu olacak.**
+4. **Kesinlikle veriyi değiştirecek veya silecek sorgular oluşturulmayacak**:
+ - `INSERT`
+ - `UPDATE`
+ - `DELETE`
+ - `DROP`
+ - `ALTER`
+ - `TRUNCATE`
+ - `CREATE`
+5. **Sadece SELECT sorguları oluşturulabilir.**
+6. **Zaman aşımı kuralı**: Sorgu en fazla **10 saniye** çalışabilir.
+7. **Satır sınırı kuralı**: Dönen sonuç varsayılan olarak **1000 satır** ile sınırlandırılmalı (`LIMIT 1000`).
+8. **Alt sorgu kontrolü**: Gereksiz karmaşık alt sorgular oluşturulmamalıdır.
+9. **Tüm cevaplar Türkçe olacak.**
+10. **Belirsiz sorularda kullanıcıdan netleştirme istenecek.**
+11. Çıktı formatı:
+  - **Kısa ve net yanıt**
+  - Gerekirse **ek açıklama**
+  - Sayılar binlik ayraçlı formatta (örn: `1.250 adet`)
+
+---
+
+## 5. Örnek Şema (Northwind - PostgreSQL snake_case)
+
+Tablo: customers
+- customer_id (primary key)
+- company_name (text)
+- contact_name (text)
+- country (text)
+- Diğer tipik alanlar: contact_title, address, city, region, postal_code, phone, fax
+
+Tablo: orders
+- order_id (primary key)
+- customer_id (foreign key -> customers.customer_id)
+- employee_id (foreign key -> employees.employee_id)
+- order_date (date/datetime)
+- required_date (date/datetime)
+- shipped_date (date/datetime, nullable)
+- ship_via (foreign key -> shippers.shipper_id)
+- freight (numeric)
+- ship_name, ship_address, ship_city, ship_region, ship_postal_code, ship_country
+
+Tablo: order_details
+- order_id (foreign key -> orders.order_id)
+- product_id (foreign key -> products.product_id)
+- unit_price (numeric)
+- quantity (integer)
+- discount (numeric, 0–1 arası oransal indirim)
+- Primary key çoğu şemada (order_id, product_id) birleşik anahtardır.
+
+Tablo: products
+- product_id (primary key)
+- product_name (text)
+- supplier_id (foreign key -> suppliers.supplier_id)
+- category_id (foreign key -> categories.category_id)
+- quantity_per_unit (text, opsiyonel)
+- unit_price (numeric)
+- units_in_stock (integer)
+- units_on_order (integer)
+- reorder_level (integer)
+- discontinued (boolean)
+
+Tablo: suppliers
+- supplier_id (primary key)
+- company_name (text)
+- country (text)
+- Diğer tipik alanlar: contact_name, contact_title, address, city, region, postal_code, phone, fax, home_page
+
+Tablo: categories
+- category_id (primary key)
+- category_name (text)
+- description (text)
+- picture (blob, opsiyonel)
+
+Tablo: employees
+- employee_id (primary key)
+- last_name (text)
+- first_name (text)
+- title (text)
+- reports_to (foreign key -> employees.employee_id, hiyerarşik ilişki)
+- birth_date, hire_date, address, city, region, postal_code, country, home_phone, extension, notes, photo, photo_path
+
+Tablo: shippers
+- shipper_id (primary key)
+- company_name (text)
+- phone (text)
+
+İlişkiler:
+- customers.customer_id = orders.customer_id
+- orders.order_id = order_details.order_id
+- products.product_id = order_details.product_id
+- suppliers.supplier_id = products.supplier_id
+- categories.category_id = products.category_id
+- employees.employee_id = orders.employee_id
+- shippers.shipper_id = orders.ship_via
+
+---
+
+## 6. Örnek Soru-Cevap Akışı
+Soru: "Geçen ay kaç sipariş verilmiş?"
+LLM → SQL:
+SELECT COUNT(*)
+FROM orders
+WHERE order_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month')
+AND order_date < DATE_TRUNC('month', CURRENT_DATE);
+
+---
+
+## 7. Geliştirme Planı
+
+### Aşama 1: Temel Altyapı
+- Docker üzerinde PostgreSQL kurulumu
+- Örnek şema ve test verilerinin eklenmesi
+- LangChain üzerinden PostgreSQL bağlantısının kurulması
+- OpenRouter API anahtarının eklenmesi
+- Gemma modelinden SQL sorgusu üretilmesinin test edilmesi
+
+### Aşama 2: Bağlam Yönetimi
+- `context.md` dosyasının LangChain prompt zincirine entegre edilmesi
+- Şema bilgisinin otomatik olarak LLM’e eklenmesi
+- Cevap formatının standartlaştırılması
+
+### Aşama 3: Sonuç İşleme
+- SQL sorgusu sonrası çıkan verinin anlamlı ve Türkçe şekilde sunulması
+- Büyük sayı formatlaması, tarih formatı, para birimi ekleme
+
+
+---
+
+## 8. Hedef Çıktı
+- Kullanıcı: Türkçe doğal dilde soru sorar
+- Sistem:
+  1. Soru + bağlam → SQL sorgusu üretir
+  2. PostgreSQL’de sorguyu çalıştırır
+  3. Ham sonucu alır
+  4. Türkçe ve anlamlı cevap üretir
+- Örnek:
+Kullanıcı: "En çok satan 5 ürünü listele."
+Sistem:"En çok satan 5 ürün şunlardır: ..."
+(Liste tablo formatında sunulur)
+
+---
+
+## 9. Gelecekteki Geliştirmeler
+- PDF/Excel rapor çıktısı
+- Sesli soru-cevap desteği
+- Web arayüz entegrasyonu
+- Otomatik özetleme ve raporlama
+-Agent metodlarının eklenmesi (API, PDF rapor, e-posta)
+-Farklı veri kaynaklarına bağlanma
+-Zamanlanmış görevler
