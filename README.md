@@ -26,9 +26,9 @@ Teknik bilgisi olmayan kullanıcıların veritabanından bilgi alabilmesi için 
 Aşağıdaki komut, context’te verilen değerlerle aynıdır (şifreleri ve portu istersen değiştir):
 ```
 docker run --name postgres-test ^
-  -e POSTGRES_USER=postgres ^
-  -e POSTGRES_PASSWORD=123456 ^
-  -e POSTGRES_DB=testdb ^
+  -e POSTGRES_USER= ^
+  -e POSTGRES_PASSWORD= ^
+  -e POSTGRES_DB= ^
   -p 5432:5432 ^
   -d postgres
 ```
@@ -171,3 +171,4 @@ Komut satırında Türkçe sorular gir:
 - Hata durumlarında anlaşılır Türkçe mesaj üretimi hedeflenir
 - Production kullanımı için ek güvenlik önlemleri önerilir
 #
+
