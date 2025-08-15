@@ -159,22 +159,26 @@ def build_sql_prompt(context_rules: str, schema_text: str, user_question: str) -
             schema_compact.append(ln[:120] + " ...")
         else:
             schema_compact.append(ln)
-    schema_compact_text = "\n".join(schema_compact[:150])  # daha kısa tut
+    schema_compact_text = "\n".join(schema_compact[:200])  # şema bilgisini artırdım
 
     system = f"""Aşağıdaki kurallara SIKI sıkıya uyarak SADECE bir PostgreSQL SELECT sorgusu üret:
 - Şemadaki tablo/kolon adlarını AYNEN (snake_case) kullan.
 - Kod bloğu, açıklama, doğal dil YAZMA. Yalnızca tek satır SQL döndür.
 - Komutlar sadece SELECT/WITH olabilir. INSERT/UPDATE/DELETE/DDL YASAK.
 - Belirsizse en basit doğru SELECT'i üret (ör: en çok kalan ürün -> order by units_in_stock desc).
+- Ürün adı arama için ILIKE kullan: product_name ILIKE '%arama%' 
+- Büyük/küçük harf duyarsız arama için ILIKE operatörünü kullan
 - Örnekler:
-  "Chai stokta ne kadar var" -> select units_in_stock from products where product_name = 'Chai'
-  "rastgele 3 ürün" -> select * from products order by random() limit 3
+  "Chai stokta ne kadar var" -> select units_in_stock from products where product_name ILIKE '%Chai%'
+  "chai ürünü" -> select * from products where product_name ILIKE '%chai%'
+  "rastgele 3 ürün" -> select product_name, unit_price from products order by random() limit 3
+  "pahalı ürünler" -> select product_name, unit_price from products where unit_price > 50 order by unit_price desc
 
-Şema (özet):
+Şema (detaylı):
 {schema_compact_text}"""
     user = f"""Kullanıcı sorusu (Türkçe): {user_question}
 
-Tek satır SELECT yaz. Başına/sonuna hiçbir açıklama/kod bloğu ekleme."""
+Tek satır SELECT yaz. Ürün adları için ILIKE kullan. Başına/sonuna hiçbir açıklama/kod bloğu ekleme."""
     return [SystemMessage(content=system), HumanMessage(content=user)]
 
 

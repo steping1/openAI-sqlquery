@@ -19,6 +19,26 @@ def print_header():
     print("Çıkmak için boş satır bırakıp Enter'a basın veya Ctrl+C\n")
 
 
+def find_similar_products(engine, search_term: str) -> List[str]:
+    """
+    Veritabanından benzer ürün adlarını bulur (fuzzy matching).
+    """
+    try:
+        # ILIKE ile benzer ürünleri ara
+        fuzzy_sql = f"""
+        SELECT DISTINCT product_name 
+        FROM products 
+        WHERE product_name ILIKE '%{search_term.strip()}%'
+        OR product_name ILIKE '%{search_term.strip().lower()}%'
+        OR product_name ILIKE '%{search_term.strip().capitalize()}%'
+        LIMIT 10
+        """
+        columns, rows = execute_select(engine, fuzzy_sql, timeout_seconds=5)
+        return [row[0] for row in rows] if rows else []
+    except Exception:
+        return []
+
+
 def preview_rows(columns: List[str], rows: List[Tuple], max_rows: int = 10) -> str:
     """
     İlk max_rows kadar satırı metin olarak önizleme için döndürür.
@@ -39,16 +59,26 @@ def preview_rows(columns: List[str], rows: List[Tuple], max_rows: int = 10) -> s
 
 def main():
     print_header()
+    
+    # DEBUG modu için ortam değişkeni kontrolü
+    DEBUG_MODE = os.getenv("DEBUG_SQL", "false").lower() == "true"
+    if DEBUG_MODE:
+        print("🐛 DEBUG MODU AÇIK - Detaylı loglar gösterilecek\n")
 
     try:
         context_rules, schema_text = load_context_and_schema("context.md")
+        if DEBUG_MODE:
+            print(f"📄 Context kuralları yüklendi ({len(context_rules)} karakter)")
+            print(f"📊 Şema bilgisi yüklendi ({len(schema_text)} karakter)\n")
     except Exception as e:
         print(f"Bağlam/şema yüklenirken hata: {e}")
         sys.exit(1)
 
     engine = None
     try:
-        engine = create_db_engine(echo=False)
+        engine = create_db_engine(echo=DEBUG_MODE)  # DEBUG modunda SQL logları göster
+        if DEBUG_MODE:
+            print("✅ Veritabanı bağlantısı başarılı\n")
     except Exception as e:
         print(f"Veritabanına bağlanılamadı: {e}")
         sys.exit(1)
@@ -116,21 +146,63 @@ def main():
         # 2) SQL'i çalıştır
         try:
             columns, rows = execute_select(engine, sql_query, timeout_seconds=None)
-            # Eğer sonuç boş ve ürün adı eşleşmesi için olası küçük/büyük harf sorunu varsa bir kez Title-Case fallback dene
-            if not rows and " where product_name = '" in sql_query:
-                import re
-                def _title_case(m):
-                    word = m.group(1)
-                    return f"= '{word[:1].upper()}{word[1:]}'"
-                retry_sql = re.sub(r"=\s*'([a-zçğıöşü]+)'", _title_case, sql_query)
-                if retry_sql != sql_query:
+            
+            # Eğer sonuç boş ve ürün adı arama sorgusu varsa farklı stratejiler dene
+            if not rows and ("product_name" in sql_query.lower()):
+                fallback_attempts = []
+                
+                # Fallback 1: ILIKE yerine = kullanılmışsa ILIKE'a çevir
+                if " = '" in sql_query and "ilike" not in sql_query.lower():
+                    fallback_sql = sql_query.replace(" = '", " ILIKE '%").replace("'", "%'")
+                    fallback_attempts.append(("ILIKE dönüşümü", fallback_sql))
+                
+                # Fallback 2: Title Case dene
+                if " where product_name" in sql_query.lower():
+                    import re
+                    def _title_case(m):
+                        word = m.group(1)
+                        return f"ILIKE '%{word[:1].upper()}{word[1:]}%'"
+                    retry_sql = re.sub(r"(=|ILIKE)\s*['\"]([a-zçğıöşü]+)['\"]", _title_case, sql_query, flags=re.IGNORECASE)
+                    if retry_sql != sql_query:
+                        fallback_attempts.append(("Title case", retry_sql))
+                
+                # Fallback 3: Tamamen küçük harf dene
+                if " where product_name" in sql_query.lower():
+                    import re
+                    def _lower_case(m):
+                        word = m.group(1)
+                        return f"ILIKE '%{word.lower()}%'"
+                    retry_sql = re.sub(r"(=|ILIKE)\s*['\"]([a-zA-ZçğıöşüÇĞIÖŞÜ]+)['\"]", _lower_case, sql_query, flags=re.IGNORECASE)
+                    if retry_sql != sql_query:
+                        fallback_attempts.append(("Küçük harf", retry_sql))
+                
+                # Fallback stratejilerini sırayla dene
+                for strategy_name, retry_sql in fallback_attempts:
                     try:
                         columns2, rows2 = execute_select(engine, retry_sql, timeout_seconds=None)
                         if rows2:
+                            print(f"[DEBUG] {strategy_name} stratejisi başarılı: {retry_sql}")
                             columns, rows = columns2, rows2
                             sql_query = retry_sql  # bilgi amaçlı güncelle
-                    except Exception:
-                        pass
+                            break
+                    except Exception as e:
+                        print(f"[DEBUG] {strategy_name} stratejisi başarısız: {e}")
+                        continue
+                
+                # Hala sonuç bulunamadıysa benzer ürünleri öner
+                if not rows:
+                    # Kullanıcının aradığı terimi çıkarmaya çalış
+                    import re
+                    search_terms = re.findall(r"['\"]([^'\"]+)['\"]", user_q)
+                    for term in search_terms:
+                        similar_products = find_similar_products(engine, term)
+                        if similar_products:
+                            print(f"\n🔍 '{term}' bulunamadı. Benzer ürünler:")
+                            for product in similar_products[:5]:
+                                print(f"  - {product}")
+                            print("Bu ürünlerden birini deneyebilirsiniz.\n")
+                            break
+                        
         except Exception as e:
             print(f"Sorgu çalıştırılırken hata: {e}")
             continue
