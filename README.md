@@ -20,7 +20,6 @@ Teknik bilgisi olmayan kullanıcıların veritabanından bilgi alabilmesi için 
 Önkoşullar:
 - Python 3.10+
 - Docker Desktop (PostgreSQL container)
-- OpenRouter API anahtarı (https://openrouter.ai/)
 
 ### 1) PostgreSQL Container’ı Çalıştır
 Aşağıdaki komut, context’te verilen değerlerle aynıdır (şifreleri ve portu istersen değiştir):
@@ -171,4 +170,5 @@ Komut satırında Türkçe sorular gir:
 - Hata durumlarında anlaşılır Türkçe mesaj üretimi hedeflenir
 - Production kullanımı için ek güvenlik önlemleri önerilir
 #
+
 
